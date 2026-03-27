@@ -62,7 +62,7 @@ allprojects {
 
 ```kotlin
 dependencies {
-    implementation("io.mobibox:mobibox-pay:1.1.0")
+    implementation("com.github.Smart-Mobile-Tech-FZCO:mobibox-pay:1.1.1")
 }
 ```
 
@@ -70,7 +70,7 @@ Or in Groovy `build.gradle`:
 
 ```groovy
 dependencies {
-    implementation 'io.mobibox:mobibox-pay:1.1.0'
+    implementation 'com.github.Smart-Mobile-Tech-FZCO:mobibox-pay:1.1.1'
 }
 ```
 

@@ -49,7 +49,7 @@ afterEvaluate {
                 from(components["release"])
                 groupId = "io.mobibox"
                 artifactId = "mobibox-pay"
-                version = project.findProperty("VERSION_NAME") as? String ?: "1.1.0"
+                version = project.findProperty("VERSION_NAME") as? String ?: "1.1.1"
 
                 pom {
                     name.set("MobiPay Android SDK")
