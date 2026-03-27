@@ -3,14 +3,17 @@ package io.mobibox.pay
 import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
+import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import kotlinx.coroutines.*
 import org.json.JSONObject
-import java.net.URLEncoder
 
 /**
  * WebView that loads and manages Mobibox Hosted Payment Fields (HPF).
@@ -68,6 +71,15 @@ class MobiPayHPFWebView @JvmOverloads constructor(
         settings.loadWithOverviewMode = true
         settings.useWideViewPort = true
 
+        isFocusable = true
+        isFocusableInTouchMode = true
+        requestFocus(View.FOCUS_DOWN)
+
+        setOnTouchListener { v, event ->
+            v.requestFocusFromTouch()
+            false
+        }
+
         addJavascriptInterface(HPFBridge(), "HPFChannel")
 
         webViewClient = object : WebViewClient() {
@@ -77,6 +89,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                 request: WebResourceRequest,
             ): Boolean {
                 val url = request.url.toString()
+                MobiPayLogger.d("WebView shouldOverrideUrlLoading: $url")
 
                 if (url.startsWith("data:") || url == "about:blank") {
                     return false
@@ -85,6 +98,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                 val lower = url.lowercase()
 
                 if (url.contains("mobipay.flutter.sdk") || url.contains("flutter.sdk")) {
+                    MobiPayLogger.d("  → Detected SDK redirect URL")
                     if (handleRedirectUrl(url)) return true
                 }
 
@@ -96,6 +110,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                 if ((isReturn || isSuccess || isCancel || isError) &&
                     (url.startsWith("http://") || url.startsWith("https://"))
                 ) {
+                    MobiPayLogger.d("  → Detected return/success/cancel/error URL")
                     if (handleRedirectUrl(url)) return true
                 }
 
@@ -103,6 +118,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
             }
 
             override fun onPageFinished(view: WebView, url: String) {
+                MobiPayLogger.d("WebView onPageFinished: $url")
                 val lower = url.lowercase()
                 val isIntermediate = lower.contains("/redirect/") ||
                         lower.contains("/interaction/") ||
@@ -115,7 +131,10 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                             lower.contains("/error") ||
                             lower.contains("mobipay.flutter.sdk")
 
-                    if (isReturnUrl) handleRedirectUrl(url)
+                    if (isReturnUrl) {
+                        MobiPayLogger.d("  → Return URL detected in onPageFinished")
+                        handleRedirectUrl(url)
+                    }
                 }
             }
         }
@@ -123,6 +142,9 @@ class MobiPayHPFWebView @JvmOverloads constructor(
 
     /** Load the HPF HTML into the WebView. */
     internal fun loadHPF() {
+        MobiPayLogger.d("── Loading HPF ──")
+        MobiPayLogger.d("  Host: $checkoutHost")
+        MobiPayLogger.d("  Token: ${sessionToken.take(20)}...")
         val html = buildHPFHtml()
         loadDataWithBaseURL("$checkoutHost/", html, "text/html", "UTF-8", null)
     }
@@ -130,10 +152,12 @@ class MobiPayHPFWebView @JvmOverloads constructor(
     // ── Redirect handling ────────────────────────────────────────────────
 
     private fun handleRedirectUrl(url: String): Boolean {
+        MobiPayLogger.d("handleRedirectUrl: $url (handled=$hasHandledRedirect)")
         if (hasHandledRedirect) return false
 
         val lower = url.lowercase()
         if (lower.contains("/redirect/") || lower.contains("/interaction/") || lower.contains("/collector/")) {
+            MobiPayLogger.d("  → Intermediate redirect, ignoring")
             return false
         }
         if (url.startsWith("data:") || url == "about:blank") return false
@@ -142,6 +166,8 @@ class MobiPayHPFWebView @JvmOverloads constructor(
             val uri = Uri.parse(url)
             val paymentIdFromUrl = uri.getQueryParameter("payment_id")
                 ?: uri.pathSegments.firstOrNull { it.contains("-") && it.length > 20 }
+
+            MobiPayLogger.d("  Extracted payment_id: $paymentIdFromUrl")
 
             if (!paymentIdFromUrl.isNullOrEmpty()) {
                 val transId = uri.getQueryParameter("trans_id")
@@ -170,21 +196,32 @@ class MobiPayHPFWebView @JvmOverloads constructor(
     // ── Payment processing ───────────────────────────────────────────────
 
     private fun processPayment(resultData: Map<String, Any?>) {
-        val processor = paymentProcessor ?: return
+        MobiPayLogger.d("── processPayment ──")
+        MobiPayLogger.d("  Result data: $resultData")
+
+        val processor = paymentProcessor ?: run {
+            MobiPayLogger.e("  paymentProcessor is NULL — aborting")
+            return
+        }
 
         val name = (resultData["cardholderName"] as? String)?.trim()
             ?: cardholderName?.trim()
 
         if (name.isNullOrEmpty()) {
+            MobiPayLogger.e("  Cardholder name is empty — resetting button")
             resetButtonState()
             return
         }
 
         val result = resultData["result"] as? String
         if (result != "success") {
+            MobiPayLogger.w("  HPF result is '$result' (not 'success') — resetting button")
             resetButtonState()
             return
         }
+
+        MobiPayLogger.d("  Cardholder: $name")
+        MobiPayLogger.d("  Calling purchase API...")
 
         scope.launch {
             try {
@@ -199,10 +236,15 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                 )
 
                 val txResult = buildTransactionResult(paymentResponse)
+                MobiPayLogger.d("── Payment Result ──")
+                MobiPayLogger.d("  Result: ${paymentResponse.result}")
+                MobiPayLogger.d("  Payment ID: ${txResult.paymentId}")
+                MobiPayLogger.d("  Public ID: ${txResult.publicId}")
                 onTransactionInitiated?.invoke(txResult)
 
                 when (paymentResponse.result) {
                     "success" -> {
+                        MobiPayLogger.d("  → SUCCESS flow")
                         resetButtonState()
                         onPaymentProcessingFinished?.invoke()
                         onTransactionComplete?.invoke(txResult)
@@ -210,6 +252,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                     }
 
                     "decline" -> {
+                        MobiPayLogger.d("  → DECLINE flow: ${paymentResponse.declineMessage}")
                         resetButtonState()
                         onPaymentProcessingFinished?.invoke()
                         onTransactionFailed?.invoke(txResult)
@@ -219,11 +262,15 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                     }
 
                     "redirect" -> {
+                        MobiPayLogger.d("  → REDIRECT flow")
+                        MobiPayLogger.d("    Redirect URL: ${paymentResponse.redirectUrl}")
+                        MobiPayLogger.d("    POST redirect: ${paymentResponse.requiresPostRedirect}")
                         pendingTransactionResult = txResult
                         handleRedirectResponse(paymentResponse, txResult)
                     }
 
                     "waiting" -> {
+                        MobiPayLogger.d("  → WAITING flow")
                         resetButtonState()
                         pendingTransactionResult = txResult
                         onPaymentProcessingStarted?.invoke()
@@ -236,6 +283,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                     }
 
                     else -> {
+                        MobiPayLogger.w("  → UNKNOWN result: ${paymentResponse.result}")
                         resetButtonState()
                         onPaymentProcessingFinished?.invoke()
                         onTransactionFailed?.invoke(txResult)
@@ -245,6 +293,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                     }
                 }
             } catch (e: Exception) {
+                MobiPayLogger.e("  Purchase EXCEPTION: ${e.message}", e)
                 resetButtonState()
                 onPaymentProcessingFinished?.invoke()
                 onError?.invoke(MobiPayException("Error processing payment: ${e.message}", e))
@@ -256,8 +305,10 @@ class MobiPayHPFWebView @JvmOverloads constructor(
         response: PaymentProcessingResponse,
         txResult: MobiPayTransactionResult,
     ) {
+        MobiPayLogger.d("── handleRedirectResponse ──")
         val redirectUrl = response.redirectUrl
         if (redirectUrl == null) {
+            MobiPayLogger.e("  No redirect URL!")
             resetButtonState()
             onPaymentProcessingFinished?.invoke()
             onTransactionFailed?.invoke(txResult)
@@ -266,25 +317,42 @@ class MobiPayHPFWebView @JvmOverloads constructor(
         }
 
         withContext(Dispatchers.Main) {
+            onPaymentProcessingFinished?.invoke()
+            visibility = View.VISIBLE
+
             if (response.requiresPostRedirect && response.redirectParams != null) {
+                MobiPayLogger.d("  Loading POST redirect form to: $redirectUrl")
                 val formHtml = buildPostRedirectForm(redirectUrl, response.redirectParams)
                 loadDataWithBaseURL(null, formHtml, "text/html", "UTF-8", null)
             } else {
+                MobiPayLogger.d("  Loading GET redirect: $redirectUrl")
                 loadUrl(redirectUrl)
             }
         }
 
         val pollId = txResult.paymentId ?: txResult.publicId
+        MobiPayLogger.d("  Starting poll with ID: $pollId")
         if (!pollId.isNullOrEmpty()) {
             startStatusPolling(pollId)
+        } else {
+            MobiPayLogger.w("  No payment ID to poll!")
         }
     }
 
     // ── Status polling ───────────────────────────────────────────────────
 
     private fun startStatusPolling(paymentId: String) {
-        val processor = paymentProcessor ?: return
-        if (statusPollJob?.isActive == true) return
+        val processor = paymentProcessor ?: run {
+            MobiPayLogger.e("Status polling: processor is null")
+            return
+        }
+        if (statusPollJob?.isActive == true) {
+            MobiPayLogger.d("Status polling: already active, skipping")
+            return
+        }
+
+        MobiPayLogger.d("── Starting Status Polling ──")
+        MobiPayLogger.d("  Payment ID: $paymentId")
 
         var lastKnownStatus: String? = null
 
@@ -296,9 +364,12 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                 delay(5_000)
                 pollCount++
 
+                MobiPayLogger.d("  Poll #$pollCount / $maxPolls")
+
                 try {
                     val statusResponse = processor.getTransactionStatus(paymentId)
                     val currentStatus = statusResponse.status ?: "unknown"
+                    MobiPayLogger.d("  Poll result: $currentStatus (was: $lastKnownStatus)")
 
                     if ((lastKnownStatus == "prepare" || lastKnownStatus == "3ds") &&
                         currentStatus != "prepare" && currentStatus != "3ds"
@@ -343,8 +414,8 @@ class MobiPayHPFWebView @JvmOverloads constructor(
 
                         // prepare, pending, 3ds, redirect → keep polling
                     }
-                } catch (_: Exception) {
-                    // transient error — keep polling
+                } catch (e: Exception) {
+                    MobiPayLogger.w("  Poll error (will retry): ${e.message}")
                 }
             }
 
@@ -439,6 +510,34 @@ class MobiPayHPFWebView @JvmOverloads constructor(
         )
     }
 
+    private fun focusCardField() {
+        requestFocus()
+
+        evaluateJavascript(
+            """
+            (function() {
+                var ch = document.getElementById('cardholder-name');
+                if (ch) ch.blur();
+                try {
+                    var iframe = document.querySelector('#card-container iframe');
+                    if (iframe && iframe.contentDocument) {
+                        var input = iframe.contentDocument.querySelector('input');
+                        if (input) { input.focus(); input.click(); return; }
+                    }
+                } catch(e) {}
+                var iframe2 = document.querySelector('#card-container iframe');
+                if (iframe2) { iframe2.focus(); }
+            })();
+            """.trimIndent(),
+            null,
+        )
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showSoftInput(this, InputMethodManager.SHOW_FORCED)
+        }, 200)
+    }
+
     private fun resetButtonState() {
         post {
             evaluateJavascript("window.resetPaymentButton && window.resetPaymentButton();", null)
@@ -446,6 +545,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
     }
 
     internal fun destroy2() {
+        MobiPayLogger.d("HPF WebView destroy")
         statusPollJob?.cancel()
         scope.cancel()
         removeJavascriptInterface("HPFChannel")
@@ -457,36 +557,55 @@ class MobiPayHPFWebView @JvmOverloads constructor(
     private inner class HPFBridge {
         @JavascriptInterface
         fun postMessage(message: String) {
+            MobiPayLogger.d("── JS → Kotlin ──")
+            MobiPayLogger.d("  Message: $message")
             try {
                 val data = JSONObject(message)
                 when (data.optString("type")) {
                     "onSubmitResult" -> {
                         val resultData = data.getJSONObject("data").toMap()
+                        MobiPayLogger.d("  Type: onSubmitResult")
+                        MobiPayLogger.d("  HPF result: ${resultData["result"]}")
+                        MobiPayLogger.d("  HPF message: ${resultData["message"]}")
                         post { onSubmitResult?.invoke(resultData) }
 
                         val result = resultData["result"] as? String
                         if (result == "success" && paymentProcessor != null) {
+                            MobiPayLogger.d("  → HPF success, starting payment processing")
                             post {
                                 onPaymentProcessingStarted?.invoke()
                                 processPayment(resultData)
                             }
                         } else {
+                            MobiPayLogger.w("  → HPF result='$result' or processor null — resetting button")
                             resetButtonState()
                         }
                     }
 
                     "onUrlChange" -> {
                         val url = data.optString("url")
+                        MobiPayLogger.d("  Type: onUrlChange → $url")
                         if (url.isNotEmpty()) post { handleRedirectUrl(url) }
                     }
 
                     "onError" -> {
-                        resetButtonState()
                         val errorMsg = data.optString("error", "Unknown error")
+                        MobiPayLogger.e("  Type: onError → $errorMsg")
+                        resetButtonState()
                         post { onError?.invoke(MobiPayException(errorMsg)) }
+                    }
+
+                    "focusNextField" -> {
+                        MobiPayLogger.d("  Type: focusNextField")
+                        post { focusCardField() }
+                    }
+
+                    else -> {
+                        MobiPayLogger.w("  Unknown type: ${data.optString("type")}")
                     }
                 }
             } catch (e: Exception) {
+                MobiPayLogger.e("  Bridge parse error: ${e.message}", e)
                 post { onError?.invoke(MobiPayException("Error parsing message: ${e.message}", e)) }
             }
         }
@@ -504,7 +623,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
 <!DOCTYPE html>
 <html>
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9, user-scalable=no">
   <style>
     * { box-sizing: border-box; }
     body {
@@ -512,7 +631,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
       margin: 0; padding: 0;
       background-color: #000000; color: #ffffff;
     }
-    .payment-container { background: #000; padding: 20px; display: flex; flex-direction: column; }
+    .payment-container { background: #000; padding: 16px; display: flex; flex-direction: column; }
     .form-title { font-size: 18px; font-weight: 600; margin: 0 0 20px; color: #fff; }
     .field-container { margin-bottom: 16px; }
     .field-label { display: block; margin-bottom: 8px; font-size: 14px; font-weight: 500; color: #fff; }
@@ -568,6 +687,7 @@ class MobiPayHPFWebView @JvmOverloads constructor(
       <label class="field-label">Cardholder Name</label>
       <input type="text" id="cardholder-name" placeholder="Cardholder name"
              autocomplete="cc-name" inputmode="text" autocapitalize="words"
+             enterkeyhint="next"
              pattern="[A-Za-z\s\-'.]*" value="$nameEscaped" />
       <div class="field-error" id="cardholder-name-error"></div>
     </div>
@@ -684,6 +804,12 @@ class MobiPayHPFWebView @JvmOverloads constructor(
                                   Math.max(0, s - (v.length - f.length)));
             }
             updatePayButtonState();
+          });
+          ch.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              HPFChannel.postMessage(JSON.stringify({ type: 'focusNextField', target: 'card' }));
+            }
           });
         }
 

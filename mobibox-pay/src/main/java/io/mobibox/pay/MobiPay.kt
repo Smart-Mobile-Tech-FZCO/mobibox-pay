@@ -52,6 +52,12 @@ class MobiPay {
         merchantKey: String,
         password: String,
     ) {
+        MobiPayLogger.d("══════════════════════════════════════")
+        MobiPayLogger.d("  MobiPay SDK initializing")
+        MobiPayLogger.d("  Host: $checkoutHost")
+        MobiPayLogger.d("  Merchant key: ${merchantKey.take(8)}...")
+        MobiPayLogger.d("══════════════════════════════════════")
+
         this.checkoutHost = checkoutHost.trimEnd('/')
         this.merchantKey = merchantKey
         this.password = password
@@ -67,6 +73,27 @@ class MobiPay {
             password = password,
         )
         isInitialized = true
+        instance = this
+        MobiPayLogger.d("  Initialized OK")
+    }
+
+    companion object {
+        @Volatile
+        internal var instance: MobiPay? = null
+            private set
+
+        /**
+         * Enable or disable debug logging.
+         *
+         * When enabled, the SDK logs API requests/responses, payment flow steps,
+         * and WebView navigation to Logcat with tag `MobiPay`.
+         *
+         * **Disabled by default.** Only enable during development.
+         */
+        @JvmStatic
+        fun setDebugMode(enabled: Boolean) {
+            MobiPayLogger.isEnabled = enabled
+        }
     }
 
     /**
@@ -157,9 +184,18 @@ class MobiPay {
         cardToken: List<String>? = null,
     ) {
         if (!isInitialized) {
+            MobiPayLogger.e("startPayment called but SDK not initialized!")
             onError?.invoke(MobiPayException("MobiPay not initialized. Call initialize() first."))
             return
         }
+
+        MobiPayLogger.d("══════════════════════════════════════")
+        MobiPayLogger.d("  startPayment")
+        MobiPayLogger.d("  Order: $orderNumber | $orderAmount $orderCurrency")
+        MobiPayLogger.d("  Description: $orderDescription")
+        MobiPayLogger.d("  Cardholder: $cardholderName")
+        MobiPayLogger.d("  Email: $email")
+        MobiPayLogger.d("══════════════════════════════════════")
 
         val sheet = MobiPayCheckoutSheet.newInstance().apply {
             this.mobiPay = this@MobiPay

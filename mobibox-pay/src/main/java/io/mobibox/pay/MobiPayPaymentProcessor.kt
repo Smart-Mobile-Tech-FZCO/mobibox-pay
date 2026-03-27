@@ -43,6 +43,11 @@ internal class MobiPayPaymentProcessor(
             selectedLanguage?.let { put("selected_language", it) }
         }
 
+        MobiPayLogger.d("── Purchase Request ──")
+        MobiPayLogger.d("  URL: $checkoutHost/api/v1/processing/purchase/card")
+        MobiPayLogger.d("  Token: ${sessionToken.take(20)}...")
+        MobiPayLogger.d("  Body: $body")
+
         val request = Request.Builder()
             .url("$checkoutHost/api/v1/processing/purchase/card")
             .addHeader("Content-Type", "application/json")
@@ -54,16 +59,28 @@ internal class MobiPayPaymentProcessor(
         val responseBody = response.body?.string()
             ?: throw MobiPayException("Empty response from payment API")
 
+        MobiPayLogger.d("── Purchase Response ──")
+        MobiPayLogger.d("  HTTP ${response.code}")
+        MobiPayLogger.d("  Body: $responseBody")
+
         if (!response.isSuccessful) {
             val errorMsg = try {
                 JSONObject(responseBody).optString("error_message", "Payment processing failed")
             } catch (_: Exception) {
                 "Payment processing failed (HTTP ${response.code})"
             }
+            MobiPayLogger.e("  Purchase FAILED: $errorMsg")
             throw MobiPayException(errorMsg)
         }
 
-        PaymentProcessingResponse.fromJson(JSONObject(responseBody))
+        val parsed = PaymentProcessingResponse.fromJson(JSONObject(responseBody))
+        MobiPayLogger.d("  Purchase result: ${parsed.result}")
+        MobiPayLogger.d("  Public ID: ${parsed.publicId}")
+        MobiPayLogger.d("  Redirect URL: ${parsed.redirectUrl}")
+        MobiPayLogger.d("  Redirect params: ${parsed.redirectParams}")
+        MobiPayLogger.d("  Return URL params: ${parsed.returnUrlQueryParams}")
+        MobiPayLogger.d("  Decline message: ${parsed.declineMessage}")
+        parsed
     }
 
     // ── Transaction status ───────────────────────────────────────────────
@@ -82,6 +99,10 @@ internal class MobiPayPaymentProcessor(
                 put("hash", hash)
             }
 
+            MobiPayLogger.d("── Status Poll Request ──")
+            MobiPayLogger.d("  URL: $checkoutHost/api/v1/payment/status")
+            MobiPayLogger.d("  Payment ID: $paymentId")
+
             val request = Request.Builder()
                 .url("$checkoutHost/api/v1/payment/status")
                 .post(body.toString().toRequestBody(JSON_MEDIA))
@@ -90,6 +111,10 @@ internal class MobiPayPaymentProcessor(
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string()
                 ?: throw MobiPayException("Empty response from status API")
+
+            MobiPayLogger.d("── Status Poll Response ──")
+            MobiPayLogger.d("  HTTP ${response.code}")
+            MobiPayLogger.d("  Body: $responseBody")
 
             if (!response.isSuccessful) {
                 val errorMsg = try {
@@ -100,10 +125,14 @@ internal class MobiPayPaymentProcessor(
                 } catch (_: Exception) {
                     "Failed to get transaction status (HTTP ${response.code})"
                 }
+                MobiPayLogger.e("  Status poll FAILED: $errorMsg")
                 throw MobiPayException(errorMsg)
             }
 
-            TransactionStatusResponse.fromJson(JSONObject(responseBody))
+            val parsed = TransactionStatusResponse.fromJson(JSONObject(responseBody))
+            MobiPayLogger.d("  Status: ${parsed.status} (${parsed.statusDescription})")
+            MobiPayLogger.d("  Reason: ${parsed.reason}")
+            parsed
         }
 
     companion object {

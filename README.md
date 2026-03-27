@@ -62,7 +62,7 @@ allprojects {
 
 ```kotlin
 dependencies {
-    implementation("io.mobibox:mobibox-pay:1.0.0")
+    implementation("io.mobibox:mobibox-pay:1.1.0")
 }
 ```
 
@@ -70,7 +70,7 @@ Or in Groovy `build.gradle`:
 
 ```groovy
 dependencies {
-    implementation 'io.mobibox:mobibox-pay:1.0.0'
+    implementation 'io.mobibox:mobibox-pay:1.1.0'
 }
 ```
 
@@ -109,6 +109,9 @@ class MyActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Enable debug logging (optional — remove for production)
+        MobiPay.setDebugMode(true)
 
         mobiPay.initialize(
             checkoutHost = "https://pay.example.com",
@@ -158,6 +161,7 @@ That's it. The SDK handles session-token creation, card collection, 3DS redirect
 | `initialize(checkoutHost, merchantKey, password)` | Configure credentials. Must be called once before any payment. |
 | `startPayment(activity, ..., callbacks)` | Opens a BottomSheet and runs the full payment flow. |
 | `suspend getSessionToken(...)` | Returns a session token (advanced — for custom UI). |
+| `setDebugMode(enabled)` | **Static.** Enable/disable debug logging (off by default). |
 
 ### `startPayment` Parameters
 
@@ -321,6 +325,45 @@ lifecycleScope.launch {
 
 ---
 
+## Debug Logging
+
+The SDK includes detailed logging for API requests/responses, payment flow steps, WebView navigation, and status polling. **Logging is disabled by default** and produces zero output in production.
+
+To enable during development:
+
+```kotlin
+MobiPay.setDebugMode(true)
+```
+
+Then filter Logcat by tag **`MobiPay`** to see the full flow:
+
+```
+MobiPay  ══════════════════════════════════════
+MobiPay    MobiPay SDK initializing
+MobiPay    Host: https://pay.example.com
+MobiPay  ══════════════════════════════════════
+MobiPay  ── Session Token Request ──
+MobiPay    URL: https://pay.example.com/api/v1/session/token
+MobiPay  ── Session Token Response ──
+MobiPay    HTTP 200
+MobiPay  ── JS → Kotlin ──
+MobiPay    Type: onSubmitResult
+MobiPay  ── Purchase Request ──
+MobiPay  ── Purchase Response ──
+MobiPay    Purchase result: redirect
+MobiPay  ── Starting Status Polling ──
+MobiPay    Poll #1 / 60 → 3ds
+MobiPay    Poll #2 / 60 → settled
+```
+
+**Important:** Always disable debug mode before releasing:
+
+```kotlin
+// MobiPay.setDebugMode(true)  // ← comment out or remove for production
+```
+
+---
+
 ## ProGuard / R8
 
 The SDK ships with consumer ProGuard rules. No additional configuration is needed.
@@ -340,7 +383,8 @@ mobi_pay_kotlin/
 │       ├── MobiPaySessionToken.kt        # Session token API
 │       ├── MobiPayHash.kt               # SHA1(MD5(...)) signing
 │       ├── MobiPayTransactionResult.kt   # Result data class
-│       └── MobiPayException.kt           # SDK exception
+│       ├── MobiPayException.kt           # SDK exception
+│       └── MobiPayLogger.kt             # Debug-only logger
 ├── app/                                  # Example app
 │   └── src/main/java/.../MainActivity.kt
 ├── build.gradle.kts                      # Root build

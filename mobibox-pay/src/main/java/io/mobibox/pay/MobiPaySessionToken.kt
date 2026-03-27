@@ -67,6 +67,10 @@ internal class MobiPaySessionToken(
             cardToken?.takeIf { it.isNotEmpty() }?.let { put("card_token", JSONArray(it)) }
         }
 
+        MobiPayLogger.d("── Session Token Request ──")
+        MobiPayLogger.d("  URL: $checkoutHost/api/v1/session/token")
+        MobiPayLogger.d("  Body: $body")
+
         val request = Request.Builder()
             .url("$checkoutHost/api/v1/session/token")
             .post(body.toString().toRequestBody(JSON_MEDIA))
@@ -76,18 +80,25 @@ internal class MobiPaySessionToken(
         val responseBody = response.body?.string()
             ?: throw MobiPayException("Empty response from session token API")
 
+        MobiPayLogger.d("── Session Token Response ──")
+        MobiPayLogger.d("  HTTP ${response.code}")
+        MobiPayLogger.d("  Body: $responseBody")
+
         if (!response.isSuccessful) {
             val errorMsg = try {
                 JSONObject(responseBody).optString("error_message", "Failed to get session token")
             } catch (_: Exception) {
                 "Failed to get session token (HTTP ${response.code})"
             }
+            MobiPayLogger.e("  Session token FAILED: $errorMsg")
             throw MobiPayException(errorMsg)
         }
 
         val json = JSONObject(responseBody)
-        json.optString("token", "").takeIf { it.isNotEmpty() }
+        val token = json.optString("token", "").takeIf { it.isNotEmpty() }
             ?: throw MobiPayException("Token not found in response")
+        MobiPayLogger.d("  Session token OK: ${token.take(20)}...")
+        token
     }
 
     companion object {

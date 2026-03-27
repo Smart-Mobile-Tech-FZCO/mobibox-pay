@@ -15,9 +15,9 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         mobiPay.initialize(
-            checkoutHost = "xxxxx-xxxxxx-xxxxxx",
-            merchantKey = "xxxxx-xxxxxx-xxxxxx",
-            password = "xxxxx-xxxxxx-xxxxxx",
+            checkoutHost = "YOUR_CHECKOUT_HOST",
+            merchantKey = "YOUR_MERCHANT_KEY",
+            password = "YOUR_PASSWORD",
         )
 
         findViewById<Button>(R.id.btn_start_payment).setOnClickListener {
