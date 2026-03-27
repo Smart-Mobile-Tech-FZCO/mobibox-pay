@@ -1,0 +1,2 @@
+-keep class io.mobibox.pay.** { *; }
+-keepclassmembers class io.mobibox.pay.** { *; }

@@ -1,0 +1,5 @@
+jdk:
+  - openjdk17
+
+install:
+  - if [ -f "./gradlew" ]; then chmod +x ./gradlew && ./gradlew :mobibox-pay:publishToMavenLocal; else gradle :mobibox-pay:publishToMavenLocal; fi
